@@ -5,7 +5,8 @@ Entry for `btc-race-24h-20261118-1444` ("Race a BTC trading bot live for 24 hour
 ## Strategy
 
 - **Enter** (all cash, long only): the close is at least 2.0% below the highest close of the last 90 bars.
-- **Exit**: trailing stop 1.0% below the highest close since entry; hard stop 3.0% below the entry close.
+- **Take profit** (half the position): when the close is 2.0% above the entry close, sell half. The rest keeps riding under the same 1.0% trailing stop.
+- **Exit** (the rest): trailing stop 1.0% below the highest close since entry; hard stop 3.0% below the entry close.
 - One position at a time, at most one order per bar, no re-entry on the same bar as an exit.
 
 ## Why
@@ -14,8 +15,9 @@ The dev window is not a range and not a steady trend: BTC opens $65,074, closes 
 
 ## Local results (frozen 24h dev window, 1,440 bars)
 
-- Net PnL **+$8.31** on $1,000, 2 trades, 1 round trip, win rate 100%, max drawdown 1.21%, fees $0.80 (kit `grade-local`, process driver).
-- Neighbouring parameters all stay positive (drawdown 1.8–2.2% with trailing stop 0.8–1.2% give +$6.13 to +$11.59; window 90 and 120 bars give the same +$8.31 to +$8.40), so this is a plateau, not a spike.
+- Net PnL **+$13.85** on $1,000, 3 trades, 1 round trip with a partial take-profit, win rate 100%, max drawdown 0.68%, fees $0.81 (kit `grade-local`, process driver).
+- The take-profit leg is the revision: the same bot without it made +$8.31 (2 trades, 1.21% drawdown). Selling half at +2.0% from the entry banks the top of the climb while the rest rides the trailing stop; if a recovery never reaches +2% the leg never fires and the bot behaves exactly as before, so it can only help. A 2.5% take-profit never fires on this window and degrades to +$9.04.
+- Neighbouring parameters all stay positive (dip 1.8–2.2%, trailing stop 0.8–1.2%, take-profit 1.5–2.5%, window 75–120 bars give +$9.04 to +$15.40), so this is a plateau, not a spike.
 - A 0.5% trailing stop was rejected as too tight (−$1.25: it chops the recovery before it runs); a 2.0% trailing stop gives back too much (+$3.05 at best, negative at a 2.0% drawdown).
 - The bot needs 90 closes on record before it can trade, so it cannot act in the first hour and a half; the deep dip it waits for is a real capitulation, not minute noise.
 
