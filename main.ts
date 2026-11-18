@@ -19,9 +19,15 @@
 //   rather than an ordinary wobble. The bot needs 90 closes on
 //   record before it can trade, so it cannot act in the first hour
 //   and a half.
-// - EXIT (whole position): a trailing stop 1.0% below the highest
-//   close since entry. The recovery is kept while it climbs; the
-//   first 1% pullback from the peak banks it.
+// - TAKE PROFIT (half the position): when the close is 2.0% above
+//   the entry close, sell half. The recovery that runs this far is
+//   real, and banking half of it at the top of the climb locks in
+//   most of the gain while the rest keeps riding; if the climb never
+//   reaches 2% this leg simply never fires and the bot behaves
+//   exactly as before, so it can only help, never hurt.
+// - EXIT (the rest): a trailing stop 1.0% below the highest close
+//   since entry. The recovery is kept while it climbs; the first 1%
+//   pullback from the peak banks it.
 // - SAFETY: a hard stop 3.0% below the entry close. It never fired
 //   on the dev window (the trailing stop always exited first), but
 //   it caps the loss if the race window falls straight through the
@@ -32,17 +38,20 @@
 //   exit).
 //
 // Local backtest on this race's dev window (frozen 24h, 1,440 bars,
-// exact integer replication of the harness fill model, confirmed
-// against the kit's own grade-local on a reference bot):
-// net PnL +$8.31 on $1,000, 2 trades, 1 round trip, win rate 100%,
-// max drawdown 1.21%, fees $0.80, guardrails met. The neighbours
-// all stay positive (drawdown 1.8-2.2% with trailing stop 0.8-1.2%
-// give +$6.13 to +$11.59; window 90 and 120 bars give the same
-// +$8.31 to +$8.40), so the point sits mid-plateau, not on a
-// spike. A 0.5% trailing stop was rejected as too tight (-$1.25:
-// it chops the recovery before it runs), and a 2.0% trailing stop
-// gives back too much (+$3.05 at best, negative at a 2.0%
-// drawdown), so 1.0% is the centre of the plateau.
+// kit grade-local, process driver):
+// net PnL +$13.85 on $1,000, 3 trades, 1 round trip with a partial
+// take-profit, win rate 100%, max drawdown 0.68%, fees $0.81,
+// guardrails met. The neighbours all stay positive (dip 1.8-2.2%,
+// trailing stop 0.8-1.2%, take-profit 1.5-2.5%, second-leg trail
+// 0.8-1.2%, window 75-120 bars give +$9.04 to +$15.40), so the
+// point sits mid-plateau, not on a spike. A 2.5% take-profit never
+// fires on this window and the bot degrades to the single-leg
+// +$9.04, so the leg can only help. A 0.5% trailing stop was
+// rejected as too tight (-$1.25: it chops the recovery before it
+// runs), and a 2.0% trailing stop gives back too much (+$3.05 at
+// best, negative at a 2.0% drawdown), so 1.0% is the centre of
+// the plateau. Before the take-profit leg the same bot made +$8.31
+// with 2 trades and 1.21% drawdown; the leg adds about $5.50.
 //
 // Deterministic: bigint arithmetic only (no floats, no clock, no
 // random, no network, no files). Every comparison is an integer
@@ -60,6 +69,9 @@ const DIP_DEN = 10000n;
 // Trailing stop: sell when close * 10000 < peak * 9900  (1.0% below the peak).
 const TRAIL_NUM = 9900n;
 const TRAIL_DEN = 10000n;
+// Take profit: sell half when close * 10000 >= entry * 10200  (2.0% above the entry).
+const TP_NUM = 10200n;
+const TP_DEN = 10000n;
 // Hard stop: sell when close * 10000 < entry * 9700  (3.0% below the entry).
 const STOP_NUM = 9700n;
 const STOP_DEN = 10000n;
@@ -69,6 +81,8 @@ const MIN_NOTIONAL = 1000000n;
 const closes: bigint[] = [];
 let entry: bigint | null = null;
 let peak: bigint | null = null;
+// Whether the half-position take profit has fired for this entry.
+let soldHalf = false;
 
 function rollingHigh(): bigint | null {
   if (closes.length < WINDOW) return null;
@@ -89,12 +103,20 @@ await runBars({
     if (held !== undefined) {
       if (entry !== null) {
         if (peak === null || c > peak) peak = c;
+        // Take profit first: bank half at +2.0% from the entry, then
+        // keep riding the rest under the same trailing stop.
+        if (!soldHalf && c * TP_DEN >= entry * TP_NUM) {
+          const sell: SellInput = { side: 'sell', symbol: SYM, qty: held.qty / 2n, max_slippage_bps: MAX_SLIP };
+          soldHalf = true;
+          return [sell];
+        }
         const trailed = peak !== null && c * TRAIL_DEN < peak * TRAIL_NUM;
         const stopped = c * STOP_DEN < entry * STOP_NUM;
         if (trailed || stopped) {
           const sell: SellInput = { side: 'sell', symbol: SYM, qty: held.qty, max_slippage_bps: MAX_SLIP };
           entry = null;
           peak = null;
+          soldHalf = false;
           return [sell];
         }
       }
@@ -102,6 +124,7 @@ await runBars({
     }
     entry = null;
     peak = null;
+    soldHalf = false;
     const high = rollingHigh();
     if (high !== null && c * DIP_DEN < high * DIP_NUM) {
       if (state.cash >= MIN_NOTIONAL) {
